@@ -51,7 +51,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y sbcl curl
 
       - name: Download chunks
-        run: curl -L --retry 3 "${{ github.event.inputs.chunks_url }}" -o chunks.jsonl
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -n "$HF_TOKEN" ]; then
+            curl -L --retry 3 -H "Authorization: Bearer $HF_TOKEN" "${{ github.event.inputs.chunks_url }}" -o chunks.jsonl
+          else
+            curl -L --retry 3 "${{ github.event.inputs.chunks_url }}" -o chunks.jsonl
+          fi
 
       - name: Download model
         run: |
