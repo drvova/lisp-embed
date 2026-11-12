@@ -32,6 +32,7 @@ runtime, and an MCP server for agents.
 | RoBERTa | roberta | as BERT, position offset 2, `<s>`/`</s>` | CLS / mean |
 | MPNet | mpnet | relative-position attention (T5 buckets), post-LN residuals | mean |
 | Llama | qwen3, qwen2, llama, mistral, gemma | RMSNorm, RoPE, GQA, SwiGLU, causal | last token |
+| Gemma-3n | embedding_gemma2_text | bidirectional attention (scale 1.0), per-layer embeddings (PLE), layer scalars, GELU-tanh gated MLP, per-layer-type RoPE (10k/1M) | mean + 512->768 projection |
 
 Verified against the reference implementations (transformers): bge-small
 golden `-0.08250509, -0.050689265, ...`; all-mpnet-base-v2 cosines
@@ -57,6 +58,7 @@ of the top-5 that are on-topic; query latency = single embed, min of 3.
 | bge-base-en-v1.5 | 768 | 0.800 | 1.000 | 614 | 10.1 | 4x |
 | bge-large-en-v1.5 | 1024 | 0.820 | 0.900 | 2245 | 13.4 | 14x |
 | Qwen3-Embedding-0.6B | 1024 | 0.820 | 0.800 | 2933 | 13.4 | 17x |
+| embeddinggemma-2 (torch ref) | 768 | 0.840 | 0.790 | 225 | 10.1 | — |
 | snowflake-arctic-embed-m | 768 | 0.660 | 0.500 | 601 | 10.1 | 4x |
 
 Index GB = 3.27M rows x dim x 4 bytes. Rebuild = relative FLOPs vs a
