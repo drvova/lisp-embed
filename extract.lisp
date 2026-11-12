@@ -14,8 +14,8 @@
   (:export #:run))
 (in-package :extract)
 
-(defparameter *src* (cfg:path (cfg:env "KB_SRC" "./corpus/")))
-(defparameter *out* (merge-pathnames "kb_records.jsonl" (cfg:data-dir)))
+(defparameter *src* #P"D:/cyber-security/")
+(defparameter *out* #P"D:/cybersec-kb/kb_records.jsonl")
 (defparameter *seen* nil)
 
 (defun md5-hex (text)
@@ -35,19 +35,14 @@
     (nreverse lines)))
 
 (defun list-files (dir)
-  "Fast recursive file listing via cmd dir /s /b, filtered."
-  (let* ((out (make-string-output-stream))
-         (win-dir (substitute #\\ #\/ (namestring dir)))
-         (proc (sb-ext:run-program
-                "cmd" (list "/c" "dir" "/s" "/b" "/a-d" win-dir)
-                :search t :output out :error nil :wait t)))
-    (declare (ignore proc))
-    (remove-if (lambda (l)
-                 (or (zerop (length l))
-                     (search ".cache" l)
-                     (search ".metadata" l)
-                     (search ".gz" l)))
-               (split-lines (get-output-stream-string out)))))
+  "Recursive file listing in pure Lisp (SBCL DIRECTORY with a ** wildcard)."
+  (let ((all (directory (merge-pathnames "**/*.*" dir))))
+    (remove-if (lambda (p)
+                 (let ((s (namestring p)))
+                   (or (search ".cache" s)
+                       (search ".metadata" s)
+                       (search ".gz" s))))
+               all)))
 
 (defun getstr (ht key)
   "String value of KEY in hash-table HT, or NIL."

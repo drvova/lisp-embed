@@ -63,10 +63,6 @@ MiniLM, e5 and similar safetensors models all work."
     (when cfg
       (let ((mt (gethash "model_type" cfg)))
         (cond
-          ((member mt '("llama" "qwen2" "qwen3" "mistral" "gemma" "gemma2")
-                   :test #'string=)
-           (setf *family* "llama")
-           (return-from load-model (llama:load-model path)))
           ((string= mt "mpnet")
            (setf *family* "mpnet" *model-type* "mpnet"))
           ((or (null mt) (member mt '("bert" "roberta" "distilbert") :test #'string=))
@@ -146,58 +142,15 @@ MiniLM, e5 and similar safetensors models all work."
                         (aref b (the fixnum (+ bi k))))))
     s))
 
-;;; ---- optional BLAS fast path (pure Lisp fallback) ----
-(defparameter *blas* nil)
-(defparameter *blas-path* (cfg:blas-path))
-
-(defun load-blas (&optional (path *blas-path*))
-  "Load OpenBLAS and enable the sgemv fast path. Returns T on success."
-  (handler-case
-      (progn
-        (sb-alien:load-shared-object path)
-        (sb-alien:define-alien-routine ("scipy_openblas_set_num_threads" %set-blas-threads)
-            sb-alien:void (n sb-alien:int))
-        (%set-blas-threads 1)  ; one BLAS thread per SBCL worker
-        (sb-alien:define-alien-routine ("scipy_cblas_sgemm" %sgemm) sb-alien:void
-          (order sb-alien:int) (transa sb-alien:int) (transb sb-alien:int)
-          (m sb-alien:int) (n sb-alien:int) (k sb-alien:int)
-          (alpha sb-alien:float)
-          (a sb-alien:system-area-pointer) (lda sb-alien:int)
-          (b sb-alien:system-area-pointer) (ldb sb-alien:int)
-          (beta sb-alien:float)
-          (c sb-alien:system-area-pointer) (ldc sb-alien:int))
-        (sb-alien:define-alien-routine ("scipy_cblas_sgemv" %sgemv) sb-alien:void
-          (order sb-alien:int) (trans sb-alien:int)
-          (m sb-alien:int) (n sb-alien:int)
-          (alpha sb-alien:float)
-          (a sb-alien:system-area-pointer) (lda sb-alien:int)
-          (x sb-alien:system-area-pointer) (incx sb-alien:int)
-          (beta sb-alien:float)
-          (y sb-alien:system-area-pointer) (incy sb-alien:int))
-        (setf *blas* t))
-    (error (e)
-      (format *error-output* "BLAS unavailable (~A); using pure Lisp.~%" e)
-      nil)))
-
 (defun linear (x x-off w b y y-off in-dim out-dim)
   "y[y-off+o] = b[o] + sum_i x[x-off+i]*W[o*in+i]."
   (declare (type (simple-array single-float (*)) x w b y)
            (type fixnum x-off y-off in-dim out-dim)
            (optimize (speed 3) (safety 0)))
-  (if *blas*
-      (progn
-        (sb-sys:with-pinned-objects (x w y)
-          (%sgemv 101 111 out-dim in-dim 1.0
-                  (sb-sys:vector-sap w) in-dim
-                  (sb-sys:sap+ (sb-sys:vector-sap x) (* 4 x-off)) 1
-                  0.0
-                  (sb-sys:sap+ (sb-sys:vector-sap y) (* 4 y-off)) 1))
-        (loop for o of-type fixnum below out-dim
-              do (incf (aref y (+ y-off o)) (aref b o))))
-      (loop for o of-type fixnum below out-dim
-            do (setf (aref y (+ y-off o))
-                     (+ (aref b o)
-                        (%dot x x-off w (the fixnum (* o in-dim)) in-dim))))))
+  (loop for o of-type fixnum below out-dim
+        do (setf (aref y (+ y-off o))
+                 (+ (aref b o)
+                    (%dot x x-off w (the fixnum (* o in-dim)) in-dim)))))
 
 (defun layernorm (x off n g b)
   "In-place LayerNorm over x[off..off+n)."
@@ -270,50 +223,29 @@ Coefficients carry alternating signs; max error 1.5e-7."
              (linear h (* tt *hidden*) (getf lw :v-w) (getf lw :v-b)
                      v-buf (* tt *hidden*) *hidden* *hidden*))
     ;; attention: full bidirectional, per head
-    (if *blas*
-        (let ((scale (/ 1.0 (sqrt (coerce *head-dim* 'single-float)))))
-          (loop for hh below *heads*
-                do (sb-sys:with-pinned-objects (q-buf k-buf v-buf scores ctx)
-                     ;; scores = scale * Q_h @ K_h^T   [seq x seq]
-                     (%sgemm 101 111 112 seq seq *head-dim* scale
-                             (sb-sys:sap+ (sb-sys:vector-sap q-buf) (* 4 hh *head-dim*)) *hidden*
-                             (sb-sys:sap+ (sb-sys:vector-sap k-buf) (* 4 hh *head-dim*)) *hidden*
-                             0.0
-                             (sb-sys:vector-sap scores) seq))
-                   (when *causal*
-                     (loop for t1 of-type fixnum below seq
-                           do (loop for t2 of-type fixnum from (1+ t1) below seq
-                                    do (setf (aref scores (+ (* t1 seq) t2)) -1e9))))
-                   (loop for t1 of-type fixnum below seq
-                         do (softmax scores (* t1 seq) seq))
-                   (sb-sys:with-pinned-objects (v-buf scores ctx)
-                     ;; ctx_h = P @ V_h   [seq x head-dim]
-                     (%sgemm 101 111 111 seq *head-dim* seq 1.0
-                             (sb-sys:vector-sap scores) seq
-                             (sb-sys:sap+ (sb-sys:vector-sap v-buf) (* 4 hh *head-dim*)) *hidden*
-                             0.0
-                             (sb-sys:sap+ (sb-sys:vector-sap ctx) (* 4 hh *head-dim*)) *hidden*))))
-        (loop for hh below *heads*
-              do (loop for t1 of-type fixnum below seq
-                       do (loop for t2 of-type fixnum below seq
-                                do (setf (aref scores (+ (* t1 seq) t2))
-                                         (if (and *causal* (> t2 t1))
-                                             -1e9
-                                             (/ (%dot q-buf
-                                                      (+ (* t1 *hidden*) (* hh *head-dim*))
-                                                      k-buf
-                                                      (+ (* t2 *hidden*) (* hh *head-dim*))
-                                                      *head-dim*)
-                                                (sqrt (coerce *head-dim* 'single-float)))))))
-                 (loop for t1 of-type fixnum below seq
-                       do (softmax scores (* t1 seq) seq))
-                 (loop for t1 of-type fixnum below seq
-                       do (loop for i below *head-dim*
-                                do (setf (aref ctx (+ (* t1 *hidden*) (* hh *head-dim*) i))
-                                         (loop for t2 of-type fixnum below seq
-                                               sum (* (aref scores (+ (* t1 seq) t2))
-                                                      (aref v-buf
-                                                            (+ (* t2 *hidden*) (* hh *head-dim*) i)))))))))
+    (loop for hh below *heads*
+          do (loop for t1 of-type fixnum below seq
+                   do (loop for t2 of-type fixnum below seq
+                            do (setf (aref scores (+ (* t1 seq) t2))
+                                     (if (and *causal* (> t2 t1))
+                                         -1e9
+                                         (/ (%dot q-buf
+                                                  (+ (* t1 *hidden*) (* hh *head-dim*))
+                                                  k-buf
+                                                  (+ (* t2 *hidden*) (* hh *head-dim*))
+                                                  *head-dim*)
+                                            (sqrt (coerce *head-dim* 'single-float)))))))
+             ;; softmax over each row of this head's scores
+             (loop for t1 of-type fixnum below seq
+                   do (softmax scores (* t1 seq) seq))
+             ;; ctx[head] = scores @ v[head]
+             (loop for t1 of-type fixnum below seq
+                   do (loop for i below *head-dim*
+                            do (setf (aref ctx (+ (* t1 *hidden*) (* hh *head-dim*) i))
+                                     (loop for t2 of-type fixnum below seq
+                                           sum (* (aref scores (+ (* t1 seq) t2))
+                                                  (aref v-buf
+                                                        (+ (* t2 *hidden*) (* hh *head-dim*) i))))))))
     ;; attention output projection + residual + LayerNorm
     (loop for tt of-type fixnum below seq
           do (linear ctx (* tt *hidden*) (getf lw :ao-w) (getf lw :ao-b)
