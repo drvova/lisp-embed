@@ -4,7 +4,7 @@
 
 (defpackage :cfg
   (:use :cl)
-  (:export #:env #:data-dir #:model-path #:path))
+  (:export #:env #:data-dir #:model-path #:blas-path #:path))
 (in-package :cfg)
 
 (defun env (name default)
@@ -20,6 +20,10 @@
             (char= (char d (1- (length d))) #\\))
         (path d)
         (path (concatenate 'string d "/")))))
+
+(defun blas-path ()
+  "Optional OpenBLAS DLL for the fast path; NIL disables it."
+  (env "KB_BLAS" nil))
 
 (defun model-path ()
   "model.safetensors path or model directory; defaults to all-MiniLM-L6-v2

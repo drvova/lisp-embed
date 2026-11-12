@@ -22,12 +22,15 @@
   (:export #:run))
 (in-package :embed)
 
-(defparameter *chunks* (merge-pathnames "kb_chunks.jsonl" (cfg:data-dir)))
-(defparameter *index* (merge-pathnames "index.bin.new" (cfg:data-dir)))
-(defparameter *meta* (merge-pathnames "meta.tsv.new" (cfg:data-dir)))
-(defparameter *texts* (merge-pathnames "texts.tsv.new" (cfg:data-dir)))
-(defparameter *threads* 8)
-(defparameter *model* (cfg:model-path))
+(defparameter *chunks* #P"D:/cybersec-kb/kb_chunks.jsonl")
+(defparameter *index* #P"D:/cybersec-kb/index.bin.new")
+(defparameter *meta* #P"D:/cybersec-kb/meta.tsv.new")
+(defparameter *texts* #P"D:/cybersec-kb/texts.tsv.new")
+(defparameter *threads* 16)
+(defparameter *max-chars* (parse-integer (cfg:env "KB_MAX_CHARS" "256")))  ; embedding input cap (chunk text stored in full)
+(defparameter *model*
+  "C:/Users/bigmo/.cache/huggingface/hub/models--sentence-transformers--all-MiniLM-L6-v2/snapshots/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/model.safetensors")
+(defparameter *model-marker* #P"D:/cybersec-kb/index.model.new")
 
 (defun esc (text)
   "TSV escaping: backslash, tab, newline, CR, non-ASCII -> \\uXXXX."
@@ -70,7 +73,7 @@
           (t0 (get-internal-real-time)))
       (with-open-file (in *chunks* :direction :input :external-format :utf-8)
         (with-open-file (vb *index* :direction :output :if-exists :supersede
-                                  :element-type '(unsigned-byte 8))
+                                  :element-type '(unsigned-byte 32))
           (with-open-file (mf *meta* :direction :output :if-exists :supersede
                                     :external-format :utf-8)
             (with-open-file (tf *texts* :direction :output :if-exists :supersede
@@ -86,9 +89,10 @@
                   (let ((futures
                           (mapcar (lambda (line)
                                     (let ((text (gethash "text" (json:parse line))))
-                                      (sb-thread:make-thread
-                                       (lambda () (bert:embed text))
-                                       :name "embed")))
+                                      (let ((short (subseq text 0 (min *max-chars* (length text)))))
+                                        (sb-thread:make-thread
+                                         (lambda () (bert:embed short))
+                                         :name "embed"))))
                                   batch)))
                     (dolist (f futures)
                       (write-f32 vb (sb-thread:join-thread f))
@@ -107,5 +111,7 @@
                   (when (>= n total) (return))))))))
       (format t "done: ~D chunks in ~,0Fs~%"
               n (/ (- (get-internal-real-time) t0) internal-time-units-per-second))
-      (format t "outputs written as *.new — swap them in manually after verifying:~%  ~A~%  ~A~%  ~A~%"
-              *index* *meta* *texts*))))
+      (with-open-file (mf *model-marker* :direction :output :if-exists :supersede)
+        (format mf "~A~%" *model*))
+      (format t "outputs written as *.new — swap them in manually after verifying:~%  ~A~%  ~A~%  ~A~%  ~A~%"
+              *index* *meta* *texts* *model-marker*))))

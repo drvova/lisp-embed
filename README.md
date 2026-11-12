@@ -66,6 +66,22 @@ Takeaways: bigger is not better — the 1024d tier gains nothing over 768d and
 costs 3-4x per query; e5-base-v2 leads quality; MiniLM-L6 is the best
 quality-per-cost (6 layers, 90ms queries, half the rebuild of a 12-layer model).
 
+## Performance: optional BLAS fast path
+
+The forward pass is pure Lisp by default. Set `KB_BLAS` to an OpenBLAS DLL
+(e.g. the one shipped with SciPy) and `bert:load-blas` switches the linear
+layers and attention to `cblas_sgemm`/`sgemv`:
+
+| Path | 256-char chunk | 512-char chunk |
+|---|---|---|
+| pure Lisp | ~1.6 s | ~8.1 s |
+| BLAS (1 thread) | ~0.34 s | ~0.70 s |
+| BLAS + 16 SBCL threads | 54-64 chunks/s | — |
+
+A 2.79M-chunk corpus rebuild drops from ~16 days to ~14 hours. The pure path
+stays the default and produces identical vectors (verified: `0.02233232` vs
+`0.022332346`).
+
 ## Quick start
 
 ```lisp
