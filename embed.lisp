@@ -87,7 +87,7 @@
                          (decf skip)))
               (loop
                 (let ((batch nil))
-                  (dotimes (_ *threads*)
+                  (dotimes (_ (min *threads* (- total n)))
                     (let ((line (read-line in nil nil)))
                       (when line (push line batch))))
                   (when (null batch) (return))
