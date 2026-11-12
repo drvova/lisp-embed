@@ -22,9 +22,11 @@ runtime, and an MCP server for agents.
 | `config.lisp` | paths and model selection via environment |
 | `bench/` | benchmark harness and results |
 
-## Model support
+## Model support — one universal facade
 
-`bert:load-model` dispatches on `model_type` from `config.json`:
+`model:load-model` / `model:embed` dispatch on `model_type` from `config.json`
+across every family; the runtime (`kb.lisp`, `embed.lisp`, `serve.lisp`) uses
+only these two functions, so any supported model plugs in without code changes:
 
 | Family | model_type | Architecture | Pooling |
 |---|---|---|---|
@@ -33,6 +35,12 @@ runtime, and an MCP server for agents.
 | MPNet | mpnet | relative-position attention (T5 buckets), post-LN residuals | mean |
 | Llama | qwen3, qwen2, llama, mistral, gemma | RMSNorm, RoPE, GQA, SwiGLU, causal | last token |
 | Gemma-3n | embedding_gemma2_text | bidirectional attention (scale 1.0), per-layer embeddings (PLE), layer scalars, GELU-tanh gated MLP, per-layer-type RoPE (10k/1M) | mean + 512->768 projection |
+
+```lisp
+(model:load-model "path/to/model.safetensors")  ; -> :bert | :mpnet | :llama | :gemma
+(model:dim)                                     ; output dimension
+(model:embed "harden the SSH server")           ; L2-normalized vector
+```
 
 Verified against the reference implementations (transformers): bge-small
 golden `-0.08250509, -0.050689265, ...`; all-mpnet-base-v2 cosines

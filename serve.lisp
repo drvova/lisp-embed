@@ -8,6 +8,8 @@
 (load (merge-pathnames "tokenizer.fasl" *load-pathname*))
 (load (merge-pathnames "llama.fasl" *load-pathname*))
 (load (merge-pathnames "bert.fasl" *load-pathname*))
+(load (merge-pathnames "gemma.fasl" *load-pathname*))
+(load (merge-pathnames "model.fasl" *load-pathname*))
 (load (merge-pathnames "kb.fasl" *load-pathname*))
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (find-package :kb)

@@ -65,7 +65,7 @@
 
 (defun run (&key (limit nil) (threads *threads*))
   (setf *threads* threads)
-  (bert:load-model *model*)
+  (model:load-model *model*)
   (let ((total (or limit (count-chunks))))
     (format t "model loaded; ~D chunks to embed with ~D threads~%" total *threads*)
     (finish-output)
@@ -91,7 +91,7 @@
                                     (let ((text (gethash "text" (json:parse line))))
                                       (let ((short (subseq text 0 (min *max-chars* (length text)))))
                                         (sb-thread:make-thread
-                                         (lambda () (bert:embed short))
+                                         (lambda () (model:embed short))
                                          :name "embed"))))
                                   batch)))
                     (dolist (f futures)

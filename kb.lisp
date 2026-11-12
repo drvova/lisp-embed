@@ -143,12 +143,12 @@ base. IEEE754 bit patterns land in float-typed memory unchanged."
 
 (defun start-encoder ()
   "Load the pure-Lisp BERT inference engine (replaces the python sidecar)."
-  (bert:load-model (cfg:model-path))
+  (model:load-model (cfg:model-path))
   (format t "encoder ready (pure-Lisp BERT)~%"))
 
 (defun encode (text)
   "Embed text via the in-process Lisp BERT engine."
-  (bert:embed text))
+  (model:embed text))
 
 (declaim (inline %dot))
 (defun %dot (base q)
