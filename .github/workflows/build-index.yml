@@ -1,0 +1,85 @@
+name: build-index
+
+# Sharded index rebuild on GitHub Actions.
+# Each shard embeds a slice of the chunk corpus and uploads its vectors;
+# merge the shards locally with merge-shards.lisp.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: 'Number of shards'
+        default: '20'
+        required: true
+      chunks_url:
+        description: 'URL of the chunks JSONL (release asset or HF dataset file)'
+        required: true
+      model_url:
+        description: 'model.safetensors URL'
+        default: 'https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/model.safetensors'
+        required: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      total: ${{ steps.m.outputs.total }}
+    steps:
+      - id: m
+        run: |
+          N=${{ github.event.inputs.shards }}
+          echo "matrix=$(python3 -c "import json;print(json.dumps(list(range($N))))")" >> "$GITHUB_OUTPUT"
+          echo "total=$N" >> "$GITHUB_OUTPUT"
+
+  embed:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      SHARD: ${{ matrix.shard }}
+      SHARDS: ${{ needs.plan.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SBCL
+        run: sudo apt-get update && sudo apt-get install -y sbcl curl
+
+      - name: Download chunks
+        run: curl -L --retry 3 "${{ github.event.inputs.chunks_url }}" -o chunks.jsonl
+
+      - name: Download model
+        run: |
+          mkdir -p model
+          curl -L --retry 3 "${{ github.event.inputs.model_url }}" -o model/model.safetensors
+          curl -L --retry 3 "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json" -o model/config.json
+          curl -L --retry 3 "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json" -o model/tokenizer.json
+          curl -L --retry 3 "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json" -o model/tokenizer_config.json
+          curl -L --retry 3 "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/vocab.txt" -o model/vocab.txt
+          mkdir -p model/1_Pooling
+          curl -L --retry 3 "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/1_Pooling/config.json" -o model/1_Pooling/config.json
+
+      - name: Build engine
+        run: sbcl --noinform --non-interactive --load build.lisp
+
+      - name: Embed shard
+        run: |
+          TOTAL=$(wc -l < chunks.jsonl)
+          export SHARD_START=$(( TOTAL * SHARD / SHARDS ))
+          export SHARD_END=$(( TOTAL * (SHARD + 1) / SHARDS ))
+          export SHARD_THREADS=4
+          echo "shard $SHARD: lines $SHARD_START..$SHARD_END of $TOTAL"
+          mkdir -p out
+          sbcl --dynamic-space-size 4096 --noinform --non-interactive --load shard.lisp
+
+      - name: Upload shard
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: out/
+          retention-days: 14

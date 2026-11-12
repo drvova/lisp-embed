@@ -108,6 +108,25 @@ all-MiniLM-L6-v2 in the HuggingFace cache), `KB_SRC` (corpus root).
 Pipeline: `extract.lisp` -> `chunk.lisp` -> `embed.lisp` -> `ann.lisp`,
 then `kb.lisp` for search and `serve.lisp` for the MCP server.
 
+## Building the index on GitHub Actions
+
+`shard.lisp` embeds a chunk range (`SHARD_START`, `SHARD_END`, `SHARD_THREADS`
+env vars); `merge-shards.lisp` concatenates the shards. The workflow
+`.github/workflows/build-index.yml` runs N shards in parallel on free runners:
+
+1. Host the chunks JSONL at an HTTPS URL (release asset, HF dataset, S3).
+2. Actions -> build-index -> Run workflow: set `shards` (e.g. 20) and
+   `chunks_url`.
+3. Download the `shard-*` artifacts, then locally:
+
+```lisp
+(sbcl --load merge-shards.lisp
+      --eval '(merge-shards:run "path/to/shards/" "data/")')
+```
+
+Each shard is ~4 vCPU; 20 shards finish a 2.8M-chunk corpus in ~14 hours of
+wall time (vs ~65 hours on one 8-core box).
+
 ## Benchmark harness
 
 `bench/test-pool.lisp` extracts a candidate pool from a live index;

@@ -63,10 +63,12 @@
           while line
           count (plusp (length line)))))
 
-(defun run (&key (limit nil) (threads *threads*))
+(defun run (&key (limit nil) (threads *threads*) (start 0) (end nil))
+  "Embed chunks [start, end) (or the first LIMIT). Writes the flat store."
   (setf *threads* threads)
   (model:load-model *model*)
-  (let ((total (or limit (count-chunks))))
+  (let* ((all (or end (count-chunks)))
+         (total (- all start)))
     (format t "model loaded; ~D chunks to embed with ~D threads~%" total *threads*)
     (finish-output)
     (let ((n 0)
@@ -79,6 +81,10 @@
             (with-open-file (tf *texts* :direction :output :if-exists :supersede
                                       :external-format :utf-8)
               (format mf "~D~C384~%" total #\Tab)
+              (let ((skip start))
+                (loop while (plusp skip)
+                      do (read-line in nil nil)
+                         (decf skip)))
               (loop
                 (let ((batch nil))
                   (dotimes (_ *threads*)
