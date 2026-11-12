@@ -1,4 +1,3 @@
 *.fasl
 data/
-bench/*.out
 bench/pool.jsonl
